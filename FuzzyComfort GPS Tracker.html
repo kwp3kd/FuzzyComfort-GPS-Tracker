@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fuzzy Comfort Tracker - Timeline</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+    #map { height: 100vh; width: 100%; }
+    .sidebar {
+        position: absolute; top: 0; left: 0; height: 100vh; width: 380px;
+        background: #fff; z-index: 1000; overflow-y: auto;
+        box-shadow: 2px 0 12px rgba(0,0,0,.15);
+        transition: transform .3s ease;
+    }
+    .sidebar.hidden { transform: translateX(-100%); }
+    .sidebar-toggle {
+        position: absolute; top: 12px; left: 392px; z-index: 1001;
+        background: #fff; border: none; border-radius: 6px;
+        padding: 8px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+        cursor: pointer; font-size: 18px;
+        transition: left .3s ease;
+    }
+    .sidebar-toggle.hidden { left: 12px; }
+    .stat-value { font-size: 28px; font-weight: bold; }
+    .stat-label { font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: .5px; }
+    .timeline-item {
+        border-left: 3px solid #0d6efd; padding: 10px 12px; margin-bottom: 8px;
+        background: #f8f9fa; border-radius: 0 6px 6px 0; cursor: pointer;
+        transition: all .15s ease;
+    }
+    .timeline-item:hover { background: #e7f1ff; transform: translateX(2px); }
+    .timeline-item.active { background: #0d6efd; color: #fff; }
+    .timeline-item.active .text-muted { color: #d0e2ff !important; }
+    .timeline-time { font-size: 11px; color: #6c757d; }
+    .timeline-title { font-weight: 600; font-size: 13px; margin: 2px 0; }
+    .timeline-meta { font-size: 11px; color: #6c757d; }
+    .badge-skor { font-size: 10px; padding: 3px 8px; border-radius: 10px; }
+    .chart-container { position: relative; height: 160px; width: 100%; margin-top: 8px; }
+    .leaflet-popup-content { font-size: 12px; margin: 8px 10px; }
+    .leaflet-popup-content b { color: #0d6efd; }
+    .popup-row { display: flex; justify-content: space-between; margin: 3px 0; }
+    .popup-label { color: #6c757d; }
+    .marker-dot { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+    .loading-overlay {
+        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,.7); z-index: 999;
+        display: none; align-items: center; justify-content: center;
+    }
+    .loading-overlay.show { display: flex; }
+    .timeline-day-header {
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 11px; font-weight: 700; color: #212529;
+        letter-spacing: .3px; text-transform: uppercase;
+        padding: 10px 4px 6px; border-bottom: 1px solid #dee2e6;
+        margin-top: 10px; margin-bottom: 8px;
+    }
+    .timeline-day-header:first-child { margin-top: 0; }
+    .timeline-day-header .badge { font-size: 9px; font-weight: 500; }
+    .date-chip {
+        font-size: 10px; padding: 2px 9px; border-radius: 12px;
+        border: 1px solid #ced4da; background: #fff; color: #495057;
+        cursor: pointer; transition: all .12s ease;
+    }
+    .date-chip:hover { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .date-chip.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .month-nav { display: flex; gap: 4px; align-items: center; }
+    .month-nav .btn { padding: 2px 8px; }
+    .filter-indicator {
+        font-size: 10px; padding: 3px 8px; border-radius: 10px;
+        background: #fff3cd; color: #664d03; display: inline-block;
+    }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar" id="sidebar">
+    <div class="p-3 border-bottom bg-dark text-white">
+        <h5 class="mb-0">🌡️ Fuzzy Comfort Timeline</h5>
+        <small id="lastUpdate" class="text-white-50">--</small>
+    </div>
+
+    <div class="p-3 border-bottom">
+        <div class="row text-center">
+            <div class="col-4"><div class="stat-label">Skor</div><div class="fw-bold" id="skor">--</div></div>
+            <div class="col-4"><div class="stat-label">Suhu</div><div class="fw-bold" id="temp">--</div></div>
+            <div class="col-4"><div class="stat-label">Hum</div><div class="fw-bold" id="hum">--</div></div>
+        </div>
+        <div class="text-center mt-2"><span class="badge bg-secondary" id="status-badge">--</span></div>
+        <div class="text-center mt-2 small text-muted" id="current-loc">--</div>
+    </div>
+
+    <!-- FILTER BULAN -->
+    <div class="p-3 border-bottom">
+        <div class="stat-label mb-1">Filter Bulan</div>
+        <div class="month-nav">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="prevMonth" title="Bulan lebih lama">‹</button>
+            <select id="monthSelect" class="form-select form-select-sm">
+                <option value="all">Semua Bulan</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="nextMonth" title="Bulan lebih baru">›</button>
+        </div>
+        <div id="dateChips" class="d-flex flex-wrap gap-1 mt-2"></div>
+    </div>
+
+    <div class="p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="stat-label">Linimasa Perjalanan</div>
+            <span class="badge bg-primary" id="session-count">0 sesi</span>
+        </div>
+        <button id="showAllBtn" class="btn btn-sm btn-outline-primary w-100 mb-2 py-1" style="font-size:11px;">
+            Tampilkan Semua Sesi
+        </button>
+        <div id="timeline-list">
+            <div class="text-muted small text-center py-3">Memuat data...</div>
+        </div>
+    </div>
+
+    <div class="p-3 border-top">
+        <div class="stat-label mb-2">Tren Sesi Terpilih</div>
+        <div class="chart-container"><canvas id="chart"></canvas></div>
+    </div>
+</div>
+
+<button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">☰</button>
+<div id="map"></div>
+<div class="loading-overlay" id="loading"><div class="spinner-border text-primary" role="status"></div></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ================== KONFIGURASI ==================
+const CHANNEL_ID   = '3540643';
+const READ_API_KEY = '0QSUSPNWKZF2OF0F';
+const REFRESH_MS   = 15000;
+const MAX_FEEDS_PER_PAGE = 8000;
+const MAX_PAGES = 50;
+
+// ================== MAP ==================
+var map = L.map('map', { zoomControl: false, preferCanvas: true })
+             .setView([-6.98, 110.40], 13);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
+}).addTo(map);
+
+// ================== STATE ==================
+var timelineLayer = L.layerGroup().addTo(map);
+var routeCache = {};
+var allPoints = [];
+var allSessions = [];
+var visibleSessions = [];
+var lastTimeMs = 0;
+var initialized = false;
+var isInitialLoading = false;
+var selectedSessionId = null;     // sesi aktif (chart + highlight timeline)
+var selectedMonth = 'all';
+var showAllSessions = true;       // TRUE = tampilkan semua di peta, FALSE = hanya sesi terpilih
+var sessionLayers = new Map();    // sid -> { group: FeatureGroup, polyline: Polyline|null }
+
+// ================== FORMATTER ==================
+const timeOnlyFmt = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' });
+const fullFmt     = new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const dayHeaderFmt = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC'
+});
+const monthFmt = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const shortDayFmt = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const jakartaDayKeyFmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
+function parseTS(iso) {
+    if (!iso) return NaN;
+    if (iso.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(iso)) return new Date(iso).getTime();
+    return new Date(iso.replace(' ', 'T') + 'Z').getTime();
+}
+function getJakartaDateKey(ms) { return jakartaDayKeyFmt.format(new Date(ms)); }
+function formatDateHeader(dateKey) {
+    const [y, m, d] = dateKey.split('-').map(Number);
+    return dayHeaderFmt.format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+}
+function formatMonthLabel(mk) {
+    const [y, m] = mk.split('-').map(Number);
+    return monthFmt.format(new Date(Date.UTC(y, m - 1, 1, 12)));
+}
+function formatShortDay(dk) {
+    const [y, m, d] = dk.split('-').map(Number);
+    return shortDayFmt.format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+}
+function fmtTime(iso)     { return fullFmt.format(new Date(parseTS(iso))); }
+function fmtTimeOnly(iso) { return timeOnlyFmt.format(new Date(parseTS(iso))); }
+
+function skorInfo(skor) {
+    if (isNaN(skor)) return { label: '--', color: '#6c757d', cls: 'secondary' };
+    if (skor >= 80) return { label: 'NYAMAN', color: '#198754', cls: 'success' };
+    if (skor >= 60) return { label: 'CUKUP',  color: '#ffc107', cls: 'warning' };
+    if (skor >= 40) return { label: 'KURANG', color: '#fd7e14', cls: 'danger' };
+    return { label: 'BURUK', color: '#dc3545', cls: 'dark' };
+}
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('hidden');
+    document.getElementById('sidebarToggle').classList.toggle('hidden');
+}
+
+// ================== VALIDASI KOORDINAT ==================
+function isValidPoint(p) {
+    if (isNaN(p.lat) || isNaN(p.lng) || isNaN(p.time)) return false;
+    if (p.lat < -90 || p.lat > 90) return false;
+    if (p.lng < -180 || p.lng > 180) return false;
+    if (p.lat === 0 && p.lng === 0) return false;
+    return true;
+}
+function parseFeeds(feeds) {
+    return feeds.map(f => ({
+        entryId: f.entry_id ? String(f.entry_id) : f.created_at,
+        lat: parseFloat(f.field1),
+        lng: parseFloat(f.field2),
+        time: parseTS(f.created_at),
+        timeISO: f.created_at,
+        temp: parseFloat(f.field4),
+        hum: parseFloat(f.field3),
+        skor: parseFloat(f.field5)
+    })).filter(isValidPoint);
+}
+
+// ================== CHART ==================
+var chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [
+            { label: 'Suhu', data: [], borderColor: '#dc3545', tension: .3, yAxisID: 'y', pointRadius: 2 },
+            { label: 'Hum',  data: [], borderColor: '#0d6efd', tension: .3, yAxisID: 'y1', pointRadius: 2 },
+            { label: 'Skor', data: [], borderColor: '#198754', tension: .3, yAxisID: 'y', pointRadius: 2 }
+        ]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { labels: { boxWidth: 10, font: { size: 10 } } } },
+        scales: {
+            y:  { position: 'left',  beginAtZero: true, max: 100, ticks: { font: { size: 9 } } },
+            y1: { position: 'right', beginAtZero: true, max: 100, grid: { drawOnChartArea: false }, ticks: { font: { size: 9 } } },
+            x:  { ticks: { font: { size: 9 }, maxRotation: 0 } }
+        }
+    }
+});
+
+// ================== FETCH ==================
+async function fetchLatest() {
+    const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds/last.json?api_key=${READ_API_KEY}`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const lat = parseFloat(data.field1), lng = parseFloat(data.field2);
+        const hum = parseFloat(data.field3), temp = parseFloat(data.field4);
+        const skor = parseFloat(data.field5);
+
+        document.getElementById('temp').innerText = isNaN(temp) ? '--' : temp.toFixed(1) + '°C';
+        document.getElementById('hum').innerText  = isNaN(hum)  ? '--' : hum.toFixed(1) + '%';
+        if (!isNaN(skor)) {
+            document.getElementById('skor').innerText = skor.toFixed(1);
+            const info = skorInfo(skor);
+            const b = document.getElementById('status-badge');
+            b.innerText = info.label; b.className = 'badge bg-' + info.cls;
+        }
+        if (isValidPoint({ lat, lng, time: 1 })) {
+            document.getElementById('current-loc').innerText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        } else {
+            document.getElementById('current-loc').innerText = 'GPS belum tersedia';
+        }
+        document.getElementById('lastUpdate').innerText = data.created_at
+            ? 'Update: ' + new Date(parseTS(data.created_at)).toLocaleString('id-ID')
+            : '--';
+        return data;
+    } catch (e) { console.error('Latest error:', e); return null; }
+}
+
+async function fetchAllFeeds() {
+    const all = [], seen = new Set();
+    let endParam = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+        let url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json` +
+                  `?results=${MAX_FEEDS_PER_PAGE}&timezone=UTC&api_key=${READ_API_KEY}`;
+        if (endParam) url += `&end=${encodeURIComponent(endParam)}`;
+        let data;
+        try {
+            const res = await fetch(url);
+            if (!res.ok) break;
+            data = await res.json();
+        } catch (e) { break; }
+        const feeds = data.feeds || [];
+        if (feeds.length === 0) break;
+        let added = 0;
+        for (const f of feeds) {
+            const k = f.entry_id ? String(f.entry_id) : f.created_at;
+            if (!seen.has(k)) { seen.add(k); all.push(f); added++; }
+        }
+        if (feeds.length < MAX_FEEDS_PER_PAGE || added === 0) break;
+        endParam = feeds[0].created_at;
+    }
+    return all;
+}
+
+async function fetchIncremental() {
+    if (!lastTimeMs) return [];
+    const startParam = new Date(Math.max(0, lastTimeMs - 5000))
+        .toISOString().slice(0, 19).replace('T', ' ');
+    const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json` +
+                `?results=${MAX_FEEDS_PER_PAGE}&timezone=UTC&api_key=${READ_API_KEY}` +
+                `&start=${encodeURIComponent(startParam)}`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        return parseFeeds((data.feeds || []).filter(f => parseTS(f.created_at) > lastTimeMs));
+    } catch (e) { console.warn('Incremental failed:', e); return []; }
+}
+
+// ================== SEGMENTASI ==================
+function segmentPoints(points) {
+    const SEG_DIST = 1000, SEG_TIME = 600;
+    const segs = [];
+    if (points.length === 0) return segs;
+    let cur = [points[0]];
+    for (let i = 1; i < points.length; i++) {
+        const p = points[i-1], c = points[i];
+        const dist = map.distance(L.latLng(p.lat, p.lng), L.latLng(c.lat, c.lng));
+        const gap = (c.time - p.time) / 1000;
+        if (dist > SEG_DIST || gap > SEG_TIME) {
+            if (cur.length) segs.push(cur);
+            cur = [c];
+        } else cur.push(c);
+    }
+    if (cur.length) segs.push(cur);
+    return segs;
+}
+function buildSessions(points) {
+    const dayMap = new Map();
+    for (const p of points) {
+        const key = getJakartaDateKey(p.time);
+        if (!dayMap.has(key)) dayMap.set(key, []);
+        dayMap.get(key).push(p);
+    }
+    const sessions = [];
+    for (const dayKey of [...dayMap.keys()].sort()) {
+        const segs = segmentPoints(dayMap.get(dayKey));
+        for (let i = 0; i < segs.length; i++) {
+            sessions.push({
+                dateKey: dayKey,
+                dateLabel: formatDateHeader(dayKey),
+                daySessionIndex: i + 1,
+                daySessionCount: segs.length,
+                points: segs[i]
+            });
+        }
+    }
+    return sessions;
+}
+
+// ================== OSRM ==================
+async function routeSession(points) {
+    if (points.length < 2) return points.map(p => [p.lat, p.lng]);
+    const waypoints = [points[0]];
+    for (let i = 1; i < points.length - 1; i++) {
+        const last = waypoints[waypoints.length - 1];
+        const dist = map.distance(L.latLng(last.lat, last.lng), L.latLng(points[i].lat, points[i].lng));
+        if (dist >= 100) waypoints.push(points[i]);
+    }
+    const lastPt = points[points.length - 1], lastWp = waypoints[waypoints.length - 1];
+    if (lastWp.lat !== lastPt.lat || lastWp.lng !== lastPt.lng) waypoints.push(lastPt);
+    if (waypoints.length < 2) return waypoints.map(p => [p.lat, p.lng]);
+
+    const MAX_WP = 50, result = [];
+    for (let i = 0; i < waypoints.length - 1; i += MAX_WP - 1) {
+        const chunk = waypoints.slice(i, Math.min(i + MAX_WP, waypoints.length));
+        if (chunk.length < 2) continue;
+        const key = 'b:' + chunk.map(p => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`).join('_');
+        let coords = routeCache[key];
+        if (!coords) {
+            try {
+                const wps = chunk.map(p => `${p.lng},${p.lat}`).join(';');
+                const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${wps}?overview=full&geometries=geojson`);
+                const data = await res.json();
+                coords = (data.code === 'Ok' && data.routes[0])
+                    ? data.routes[0].geometry.coordinates.map(c => [c[1], c[0]])
+                    : chunk.map(p => [p.lat, p.lng]);
+            } catch (e) { coords = chunk.map(p => [p.lat, p.lng]); }
+            routeCache[key] = coords;
+        }
+        if (result.length > 0) coords = coords.slice(1);
+        result.push(...coords);
+    }
+    return result.length > 0 ? result : points.map(p => [p.lat, p.lng]);
+}
+
+// ================== ID HELPERS ==================
+function getSessionId(s) { return `${s.dateKey}#${s.daySessionIndex}`; }
+function findSessionIndex(list, id) {
+    if (!id) return -1;
+    for (let i = 0; i < list.length; i++) if (getSessionId(list[i]) === id) return i;
+    const dayKey = id.split('#')[0];
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].dateKey === dayKey) return i;
+    return -1;
+}
+
+// ================== MAP FILTER LOGIC ==================
+function applyMapFilter() {
+    if (!sessionLayers || sessionLayers.size === 0) return;
+
+    let filterSid = showAllSessions ? null : selectedSessionId;
+
+    // Fallback: kalau sesi terpilih hilang (mis. tidak ada di filter baru),
+    // balik ke mode tampilkan semua
+    if (filterSid && !sessionLayers.has(filterSid)) {
+        filterSid = null;
+        showAllSessions = true;
+        updateShowAllButton();
+    }
+
+    sessionLayers.forEach((info, sid) => {
+        const shouldShow = filterSid === null || sid === filterSid;
+        const hasLayer = timelineLayer.hasLayer(info.group);
+        if (shouldShow && !hasLayer) timelineLayer.addLayer(info.group);
+        if (!shouldShow && hasLayer) timelineLayer.removeLayer(info.group);
+
+        // Highlight polyline sesi aktif (untuk mode tampil-semua)
+        if (info.polyline) {
+            const isActive = sid === selectedSessionId;
+            info.polyline.setStyle({
+                weight: isActive ? 6 : 4,
+                opacity: isActive ? 0.95 : 0.72
+            });
+        }
+    });
+}
+
+function updateShowAllButton() {
+    const btn = document.getElementById('showAllBtn');
+    if (!btn) return;
+    if (showAllSessions) {
+        btn.disabled = true;
+        btn.innerHTML = '✓ Semua Sesi Ditampilkan';
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-primary');
+    } else {
+        btn.disabled = false;
+        btn.innerHTML = 'Tampilkan Semua Sesi';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-outline-primary');
+    }
+}
+
+function showAllSessionsOnMap() {
+    showAllSessions = true;
+    applyMapFilter();
+    updateShowAllButton();
+    // Fit ke semua titik sesi dalam filter aktif
+    if (visibleSessions.length > 0) {
+        const allPts = visibleSessions.flatMap(s => s.points.map(p => [p.lat, p.lng]));
+        const bounds = L.latLngBounds(allPts);
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+    }
+}
+
+// ================== FILTER & UI ==================
+function getVisibleSessions() {
+    if (selectedMonth === 'all') return allSessions;
+    return allSessions.filter(s => s.dateKey.slice(0, 7) === selectedMonth);
+}
+
+function renderDateChips() {
+    const wrap = document.getElementById('dateChips');
+    const dayKeys = [...new Set(visibleSessions.map(s => s.dateKey))].sort().reverse();
+    wrap.innerHTML = '';
+    dayKeys.forEach(dk => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'date-chip';
+        btn.textContent = formatShortDay(dk);
+        btn.title = formatDateHeader(dk);
+        btn.dataset.dk = dk;
+        btn.onclick = () => {
+            const idx = visibleSessions.findIndex(s => s.dateKey === dk);
+            if (idx < 0) return;
+            const el = document.querySelector(`.timeline-item[data-idx="${idx}"]`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            selectSession(idx, { zoom: true });
+            highlightChip(dk);
+        };
+        wrap.appendChild(btn);
+    });
+    if (selectedSessionId) highlightChip(selectedSessionId.split('#')[0]);
+}
+function highlightChip(dk) {
+    document.querySelectorAll('.date-chip').forEach(el => {
+        el.classList.toggle('active', el.dataset.dk === dk);
+    });
+}
+
+function updateSessionCount() {
+    const days = new Set(visibleSessions.map(s => s.dateKey)).size;
+    const pts  = visibleSessions.reduce((a, s) => a + s.points.length, 0);
+    document.getElementById('session-count').innerText =
+        `${visibleSessions.length} sesi · ${days} hari · ${pts} titik`;
+}
+
+function rebuildMonthSelect() {
+    const sel = document.getElementById('monthSelect');
+    const monthMap = new Map();
+    for (const s of allSessions) {
+        const mk = s.dateKey.slice(0, 7);
+        if (!monthMap.has(mk)) monthMap.set(mk, { days: new Set(), sessions: 0 });
+        monthMap.get(mk).days.add(s.dateKey);
+        monthMap.get(mk).sessions++;
+    }
+    const monthKeys = [...monthMap.keys()].sort().reverse();
+
+    sel.innerHTML = '<option value="all">Semua Bulan</option>';
+    for (const mk of monthKeys) {
+        const info = monthMap.get(mk);
+        const opt = document.createElement('option');
+        opt.value = mk;
+        opt.textContent = `${formatMonthLabel(mk)} — ${info.days.size} hari, ${info.sessions} sesi`;
+        sel.appendChild(opt);
+    }
+
+    if (selectedMonth !== 'all' && monthMap.has(selectedMonth)) sel.value = selectedMonth;
+    else { selectedMonth = 'all'; sel.value = 'all'; }
+
+    document.getElementById('prevMonth').disabled = monthKeys.length === 0;
+    document.getElementById('nextMonth').disabled = monthKeys.length === 0;
+}
+
+function shiftMonth(dir) {
+    const monthKeys = [...new Set(allSessions.map(s => s.dateKey.slice(0, 7)))].sort().reverse();
+    if (monthKeys.length === 0) return;
+    let i = monthKeys.indexOf(selectedMonth);
+    if (i < 0) i = 0;
+    else i = Math.max(0, Math.min(monthKeys.length - 1, i + dir));
+    selectedMonth = monthKeys[i];
+    document.getElementById('monthSelect').value = selectedMonth;
+    onMonthChange();
+}
+
+async function onMonthChange() {
+    selectedSessionId = null;
+    showAllSessions = true;       // reset ke tampilkan-semua saat ganti bulan
+    visibleSessions = getVisibleSessions();
+
+    renderTimeline(visibleSessions);
+    renderDateChips();
+    updateSessionCount();
+    updateShowAllButton();
+
+    await renderMap(visibleSessions, { fit: true });
+
+    if (visibleSessions.length > 0) {
+        // Auto-pilih sesi terakhir untuk chart, tapi JANGAN ubah filter peta
+        selectSession(visibleSessions.length - 1, { zoom: false, preserveFilter: true });
+    }
+}
+
+// ================== RENDER TIMELINE ==================
+function renderTimeline(sessions) {
+    const list = document.getElementById('timeline-list');
+    const sidebar = document.getElementById('sidebar');
+    const savedScroll = sidebar.scrollTop;
+
+    list.innerHTML = '';
+    if (sessions.length === 0) {
+        list.innerHTML = selectedMonth === 'all'
+            ? '<div class="text-muted small text-center py-3">Belum ada data GPS valid</div>'
+            : '<div class="text-muted small text-center py-3">Tidak ada data di bulan ini</div>';
+        sidebar.scrollTop = savedScroll;
+        return;
+    }
+
+    const byDate = new Map();
+    sessions.forEach((s, i) => {
+        if (!byDate.has(s.dateKey)) byDate.set(s.dateKey, []);
+        byDate.get(s.dateKey).push({ sess: s, idx: i });
+    });
+
+    const dates = [...byDate.keys()].sort().reverse();
+    for (const dateKey of dates) {
+        const daySessions = byDate.get(dateKey);
+        const totalPts = daySessions.reduce((a, x) => a + x.sess.points.length, 0);
+
+        const header = document.createElement('div');
+        header.className = 'timeline-day-header';
+        header.dataset.dk = dateKey;
+        header.innerHTML =
+            `<span>${formatDateHeader(dateKey)}</span>` +
+            `<span class="badge bg-secondary">${daySessions.length} sesi · ${totalPts} titik</span>`;
+        list.appendChild(header);
+
+        daySessions.slice().reverse().forEach(({ sess, idx }) => {
+            const seg = sess.points;
+            const start = seg[0], end = seg[seg.length - 1];
+            const avgSkor = seg.reduce((s, p) => s + (isNaN(p.skor) ? 0 : p.skor), 0) / seg.length;
+            const info = skorInfo(avgSkor);
+            const duration = Math.max(0, ((end.time - start.time) / 60000)).toFixed(0);
+
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+            item.dataset.idx = idx;
+            item.dataset.sid = getSessionId(sess);
+            item.onclick = () => {
+                selectSession(idx, { zoom: true });
+                highlightChip(sess.dateKey);
+            };
+
+            const label = sess.daySessionCount > 1
+                ? `Sesi ${sess.daySessionIndex}/${sess.daySessionCount} · ${seg.length} titik`
+                : `${seg.length} titik`;
+
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="timeline-time">${fmtTimeOnly(start.timeISO)} – ${fmtTimeOnly(end.timeISO)}</div>
+                        <div class="timeline-title">${label}</div>
+                        <div class="timeline-meta">${duration} menit · ${avgSkor.toFixed(1)} skor</div>
+                    </div>
+                    <span class="badge-skor bg-${info.cls} text-${info.cls === 'warning' ? 'dark' : 'white'}">${info.label}</span>
+                </div>`;
+            list.appendChild(item);
+        });
+    }
+    sidebar.scrollTop = savedScroll;
+
+    if (selectedSessionId) {
+        document.querySelectorAll('.timeline-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.sid === selectedSessionId);
+        });
+    }
+}
+
+// ================== SELECT SESSION ==================
+function selectSession(idx, opts) {
+    opts = opts || {};
+    const doZoom = opts.zoom !== false;
+    const preserveFilter = opts.preserveFilter === true;   // auto-select tidak ubah filter peta
+
+    const sess = visibleSessions[idx];
+    if (!sess || sess.points.length === 0) return;
+    const seg = sess.points;
+
+    selectedSessionId = getSessionId(sess);
+
+    // Update highlight timeline
+    document.querySelectorAll('.timeline-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.sid === selectedSessionId);
+    });
+
+    // Update filter peta KECUALI saat auto-select
+    if (!preserveFilter) {
+        showAllSessions = false;
+        applyMapFilter();
+        updateShowAllButton();
+    }
+
+    if (doZoom) {
+        const bounds = L.latLngBounds(seg.map(p => [p.lat, p.lng]));
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    }
+
+    chart.data.labels = seg.map(p => fmtTimeOnly(p.timeISO));
+    chart.data.datasets[0].data = seg.map(p => p.temp);
+    chart.data.datasets[1].data = seg.map(p => p.hum);
+    chart.data.datasets[2].data = seg.map(p => p.skor);
+    chart.update();
+}
+
+// ================== RENDER MAP ==================
+async function renderMap(sessions, opts) {
+    const fit = !opts || opts.fit !== false;
+    const savedCenter = map.getCenter();
+    const savedZoom = map.getZoom();
+
+    timelineLayer.clearLayers();
+    sessionLayers = new Map();
+
+    const colors = ['#0d6efd', '#198754', '#dc3545', '#fd7e14', '#6f42c1', '#20c997', '#d63384'];
+    const allPts = [];
+
+    for (let s = 0; s < sessions.length; s++) {
+        const sess = sessions[s];
+        const seg = sess.points;
+        if (seg.length === 0) continue;
+
+        const routeCoords = await routeSession(seg);
+        const color = colors[s % colors.length];
+        const sid = getSessionId(sess);
+
+        // Satu FeatureGroup per sesi -> gampang di-toggle
+        const group = L.featureGroup();
+        let polyline = null;
+
+        if (routeCoords.length > 1) {
+            polyline = L.polyline(routeCoords, {
+                color, weight: 4, opacity: 0.85, lineCap: 'round'
+            });
+            polyline.addTo(group);
+        }
+
+        const dateLabel = sess.dateLabel;
+        const sesLabel = sess.daySessionCount > 1
+            ? `Sesi ${sess.daySessionIndex}/${sess.daySessionCount}` : `Sesi`;
+
+        seg.forEach((p, i) => {
+            const info = skorInfo(p.skor);
+            const isFirst = i === 0, isLast = i === seg.length - 1;
+            const marker = L.circleMarker([p.lat, p.lng], {
+                radius: isFirst || isLast ? 8 : 5,
+                color: '#fff', weight: 2,
+                fillColor: isFirst ? '#198754' : (isLast ? '#dc3545' : info.color),
+                fillOpacity: 1
+            });
+            marker.bindPopup(`
+                <div style="min-width:210px">
+                    <b>${dateLabel}</b><br>
+                    <small class="text-muted">${sesLabel} · ${fmtTime(p.timeISO)} · Titik ${i+1}/${seg.length}</small>
+                    <hr style="margin:6px 0">
+                    <div class="popup-row"><span class="popup-label">Suhu</span><b>${isNaN(p.temp)?'--':p.temp.toFixed(1)+'°C'}</b></div>
+                    <div class="popup-row"><span class="popup-label">Kelembaban</span><b>${isNaN(p.hum)?'--':p.hum.toFixed(1)+'%'}</b></div>
+                    <div class="popup-row"><span class="popup-label">Skor</span><b>${isNaN(p.skor)?'--':p.skor.toFixed(1)}</b></div>
+                    <div class="popup-row"><span class="popup-label">Status</span>
+                        <span class="badge bg-${info.cls} text-${info.cls==='warning'?'dark':'white'}">${info.label}</span>
+                    </div>
+                </div>`);
+            marker.addTo(group);
+        });
+
+        group.addTo(timelineLayer);
+        sessionLayers.set(sid, { group, polyline });
+        allPts.push(...seg);
+    }
+
+    // Terapkan filter visibilitas sesuai state
+    applyMapFilter();
+    updateShowAllButton();
+
+    if (fit && allPts.length > 0) {
+        const bounds = L.latLngBounds(allPts.map(p => [p.lat, p.lng]));
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+    } else {
+        map.setView(savedCenter, savedZoom, { animate: false });
+    }
+}
+
+// ================== REFRESH UI ==================
+async function refreshUI(opts) {
+    opts = opts || {};
+    const fit = opts.fit === true;
+
+    rebuildMonthSelect();
+    visibleSessions = getVisibleSessions();
+
+    renderTimeline(visibleSessions);
+    renderDateChips();
+    updateSessionCount();
+    updateShowAllButton();
+
+    await renderMap(visibleSessions, { fit });
+
+    const idx = findSessionIndex(visibleSessions, selectedSessionId);
+    if (idx >= 0) selectSession(idx, { zoom: false, preserveFilter: true });
+    else selectedSessionId = null;
+}
+
+// ================== LOAD ==================
+function mergePoints(existing, incoming) {
+    const seen = new Set(existing.map(p => p.entryId));
+    for (const p of incoming) {
+        if (!seen.has(p.entryId)) { existing.push(p); seen.add(p.entryId); }
+    }
+    existing.sort((a, b) => a.time - b.time);
+}
+
+async function initialLoad() {
+    document.getElementById('loading').classList.add('show');
+    try {
+        const feeds = await fetchAllFeeds();
+        allPoints = parseFeeds(feeds);
+        if (allPoints.length === 0) {
+            allSessions = []; visibleSessions = [];
+            refreshUI({ fit: true });
+            initialized = true;
+            return;
+        }
+        lastTimeMs = allPoints[allPoints.length - 1].time;
+        allSessions = buildSessions(allPoints);
+
+        await refreshUI({ fit: true });
+
+        if (visibleSessions.length > 0) {
+            selectSession(visibleSessions.length - 1, { zoom: false, preserveFilter: true });
+        }
+        initialized = true;
+    } catch (e) {
+        console.error('Initial load error:', e);
+    } finally {
+        document.getElementById('loading').classList.remove('show');
+    }
+}
+
+async function refreshTick() {
+    if (isInitialLoading) return;
+    const latest = await fetchLatest();
+    if (!latest) return;
+
+    if (!initialized) {
+        isInitialLoading = true;
+        try { await initialLoad(); } finally { isInitialLoading = false; }
+        return;
+    }
+
+    const latestMs = parseTS(latest.created_at);
+    if (!latestMs || latestMs <= lastTimeMs) return;
+
+    const newPts = await fetchIncremental();
+    if (newPts.length === 0) return;
+
+    mergePoints(allPoints, newPts);
+    lastTimeMs = allPoints[allPoints.length - 1].time;
+    allSessions = buildSessions(allPoints);
+
+    await refreshUI({ fit: false });   // pertahankan state filter & view
+}
+
+// ================== EVENTS ==================
+document.getElementById('monthSelect').addEventListener('change', onMonthChange);
+document.getElementById('prevMonth').addEventListener('click', () => shiftMonth(-1));
+document.getElementById('nextMonth').addEventListener('click', () => shiftMonth(+1));
+document.getElementById('showAllBtn').addEventListener('click', showAllSessionsOnMap);
+
+// Kick off
+updateShowAllButton();
+refreshTick();
+setInterval(refreshTick, REFRESH_MS);
+</script>
+</body>
+</html>
