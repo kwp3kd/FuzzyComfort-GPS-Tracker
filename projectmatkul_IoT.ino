@@ -28,11 +28,11 @@
 #include <TinyGPS++.h>
 
 // ================== KONFIGURASI USER ==================
-const char* WIFI_SSID     = "CELENGresing";        // <-- GANTI
-const char* WIFI_PASSWORD = "dasarceleng";    // <-- GANTI
+const char* WIFI_SSID     = "SESUAIKAN MILIK ANDA";        // <-- GANTI
+const char* WIFI_PASSWORD = "SESUAIKAN MILIK ANDA";    // <-- GANTI
 
-unsigned long myChannelNumber = 3540643;           // <-- GANTI Channel ID
-const char*   myWriteAPIKey   = "BJ6NTEU5G3CW6LH4"; // <-- GANTI Write API Key
+unsigned long myChannelNumber = SESUAIKAN MILIK ANDA;           // <-- GANTI Channel ID
+const char*   myWriteAPIKey   = "SESUAIKAN MILIK ANDA"; // <-- GANTI Write API Key
 
 // ================== PIN ==================
 #define DHTPIN   4
